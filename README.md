@@ -27,6 +27,10 @@ abumasn64 --asn64-version 2.81 source.s --run-assembler \
 
 Only ASN64 2.81 is proven. Other versions are refused by name. It matches every RageWars ROM and BattleTanx US.
 
+## Development
+
+Run checks with `ci/check`. GitLab users set the CI file path to `ci/gitlab.yml`.
+
 ## Credits
 
 Built on [RocketRet/modern-asn64](https://github.com/RocketRet/modern-asn64). See NOTICE.

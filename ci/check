@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+# Inputs: TMPDIR and ABUMASN64_GNU_AS. The assembler must be selected explicitly.
+if [ "$#" -ne 0 ]; then echo 'usage: ci/check (set TMPDIR and ABUMASN64_GNU_AS)' >&2; exit 1; fi
+for tool in python3 bash dirname rg; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "missing tool: $tool" >&2; exit 1; }
+done
+cd "$(dirname "$0")/.."
+if [ -z "${ABUMASN64_GNU_AS:-}" ]; then echo 'missing input: ABUMASN64_GNU_AS' >&2; exit 1; fi
+assembler=$(command -v "$ABUMASN64_GNU_AS") || { echo "missing tool: $ABUMASN64_GNU_AS" >&2; exit 1; }
+export ABUMASN64_GNU_AS="$assembler"
+python3 - <<'PY'
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+if sys.version_info < (3, 11):
+    sys.exit("missing tool: Python 3.11 or later")
+for module in ("ruff", "mypy"):
+    if importlib.util.find_spec(module) is None:
+        sys.exit(f"missing tool: {module}")
+temporary = os.environ.get("TMPDIR")
+if not temporary or not Path(temporary).is_absolute() or not Path(temporary).is_dir() or not os.access(temporary, os.W_OK):
+    sys.exit("missing input: TMPDIR (an existing writable absolute directory is required)")
+assembler = Path(os.environ["ABUMASN64_GNU_AS"])
+if not assembler.is_file() or not os.access(assembler, os.X_OK):
+    sys.exit(f"missing tool: ABUMASN64_GNU_AS ({assembler})")
+PY
+status=0
+bin/test || status=1
+bin/lint || status=1
+bin/hygiene || status=1
+exit "$status"

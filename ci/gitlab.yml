@@ -1,0 +1,14 @@
+check:
+  image: python:${PYTHON_VERSION}-bookworm
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ['3.11', '3.13']
+  variables:
+    TMPDIR: $CI_PROJECT_DIR/.ci-work/tmp
+    ABUMASN64_GNU_AS: mips-linux-gnu-as
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends binutils-mips-linux-gnu ripgrep
+    - ci/setup "$CI_PROJECT_DIR/.ci-work"
+  script:
+    - ci/check
