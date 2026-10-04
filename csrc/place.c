@@ -309,14 +309,9 @@ int place_main(int argc, char **argv) {
     for (size_t s = 1; s < count; s++) {
         if (!is_constant(&elf, s, text)) continue;
         const Section *section = &elf.sections[s];
-        if (!known[s]) {
-            bool data = false;
-            for (uint32_t i = 0; section->data && i < section->size; i++) data = data || section->data[i];
-            /* An unreferenced, unallocated .rdata (gcc's unused literal pool) never reaches the image. */
-            if (data && (section->flags & SHF_ALLOC))
-                problem(&context, xformat("%s has data but nothing gives its address", section->label));
-            continue;
-        }
+        /* A section nothing references (an unused literal pool, a jump table the code does not use) never
+           reaches the image: data bytes come from the ROM slice and only .text is linked. */
+        if (!known[s]) continue;
         if (section->type == SHT_NOBITS) continue;
         if (is_pool(section)) {
             for (size_t i = 0; i < ref_count; i++) {
