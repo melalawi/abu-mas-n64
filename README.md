@@ -22,7 +22,7 @@ n64link asn64 --as mips-linux-gnu-as -march=vr4300 -mabi=32 -EB -G0 --no-pad-sec
 n64link place source.o -o placed.o --rom game.z64 --text 0x80001000:0x1000:0x40 --map 0x80000400:0x1000:0x100000
 ```
 
-Run `n64link --help` for every option. Only ASN64 2.81 is proven.
+Run `n64link --help` for every option. Only ASN64 2.81 is proven. It builds every RageWars ROM and BattleTanx US byte for byte.
 
 ## Development
 
