@@ -1,14 +1,9 @@
 check:
-  image: python:${PYTHON_VERSION}-bookworm
-  parallel:
-    matrix:
-      - PYTHON_VERSION: ['3.11', '3.13']
+  image: debian:bookworm
   variables:
-    TMPDIR: $CI_PROJECT_DIR/.ci-work/tmp
-    ABUMASN64_GNU_AS: mips-linux-gnu-as
+    N64LINK_GNU_AS: mips-linux-gnu-as
   before_script:
     - apt-get update
-    - apt-get install -y --no-install-recommends binutils-mips-linux-gnu ripgrep
-    - ci/setup "$CI_PROJECT_DIR/.ci-work"
+    - apt-get install -y --no-install-recommends gcc libc6-dev make python3 binutils-mips-linux-gnu ripgrep
   script:
     - ci/check

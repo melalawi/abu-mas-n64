@@ -1,39 +1,36 @@
-# AbuMasN64
+# n64link
 
-Turns SN64 cc1 assembly into GNU MIPS assembly that builds the same bytes as SN Systems ASN64 2.81.
+Two small steps for building N64 C code against the original ROM.
+
+- `n64link asn64` turns SN64 cc1 assembly into GNU MIPS assembly that builds the same bytes as SN Systems ASN64 2.81.
+- `n64link place` checks a compiled unit's constants against the ROM and makes its code linkable on its own.
 
 > This is a personal tool. It is not officially maintained and may change or break without notice.
 
-## Install
+## Build
 
 ```sh
-python3 -m pip install .
+make
 ```
 
-## Dependencies
-
-- Python 3.11 or later
-- GNU MIPS binutils
+This writes the static binary `build/n64link`. It needs a C compiler with a static libc.
 
 ## Usage
 
 ```sh
-abumasn64 --asn64-version 2.81 source.s > normalized.s
-abumasn64 --asn64-version 2.81 source.s --run-assembler \
-  --gnu-as-path "$(command -v mips-linux-gnu-as)" \
-  --asflags='-march=vr4300 -mabi=32 -EB -G0 --no-pad-sections' \
-  --output source.o
+n64link asn64 --as mips-linux-gnu-as -march=vr4300 -mabi=32 -EB -G0 --no-pad-sections source.s -o source.o
+n64link place source.o -o placed.o --rom game.z64 --text 0x80001000:0x1000:0x40 --map 0x80000400:0x1000:0x100000
 ```
 
-Only ASN64 2.81 is proven. Other versions are refused by name. It matches every RageWars ROM and BattleTanx US.
+Run `n64link --help` for every option. Only ASN64 2.81 is proven.
 
 ## Development
 
-Run checks with `ci/check`. GitLab users set the CI file path to `ci/gitlab.yml`.
+Run `ci/check` with `N64LINK_GNU_AS` set to GNU MIPS as.
 
 ## Credits
 
-Built on [RocketRet/modern-asn64](https://github.com/RocketRet/modern-asn64). See NOTICE.
+The asn64 rules come from [RocketRet/modern-asn64](https://github.com/RocketRet/modern-asn64). See NOTICE.
 
 ## License
 

@@ -1,9 +1,7 @@
-AbuMasN64
+n64link (formerly AbuMasN64)
 Copyright (C) 2026 mo
 GPL-3.0-or-later. See LICENSE.
 
-schedule.py and macros.py derive from RocketRet/modern-asn64 at 20d2172
-(https://github.com/RocketRet/modern-asn64), released under the Unlicense.
-
-The CLI layout follows mkst/maspsx (https://github.com/mkst/maspsx).
-No maspsx code is included.
+The asn64 scheduling and macro rules in csrc/asn64.c derive from
+RocketRet/modern-asn64 at 20d2172 (https://github.com/RocketRet/modern-asn64),
+released under the Unlicense.

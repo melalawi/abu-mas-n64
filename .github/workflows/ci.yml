@@ -8,17 +8,9 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.11', '3.13']
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
       - run: sudo apt-get update && sudo apt-get install -y binutils-mips-linux-gnu ripgrep
-      - run: ci/setup "$RUNNER_TEMP/abumasn64-ci"
       - run: ci/check
         env:
-          TMPDIR: ${{ runner.temp }}/abumasn64-ci/tmp
-          ABUMASN64_GNU_AS: mips-linux-gnu-as
+          N64LINK_GNU_AS: mips-linux-gnu-as
