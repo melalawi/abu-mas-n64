@@ -89,3 +89,62 @@ class Asn64Tests(unittest.TestCase):
                     result = run(*args, text=text)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(diagnostic, result.stderr.decode())
+
+
+JUMP_TABLE = """\
+\t.set noreorder
+\t.set noat
+\t.text
+\t.globl func
+func:
+\tlui $at, %hi($jt)
+\tlw $at, %lo($jt)($at)
+\tjr $at
+\tnop
+$L1:
+\tjr $ra
+\tnop
+$L2:
+\tjr $ra
+\tnop
+\t.section .rdata,""
+\t.align 2
+$jt:
+\t.word $L1
+\t.word $L2
+"""
+TEXT_VRAM, TABLE_VRAM = 0x80001000, 0x80001100
+
+
+class PlaceTests(unittest.TestCase):
+    """KMC gcc emits a jump table as an unallocated .rdata whose R_MIPS_32 words point into .text."""
+
+    def place(self, table: tuple[int, int]) -> tuple[subprocess.CompletedProcess[bytes], dict[str, bytes]]:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "unit.s").write_text(JUMP_TABLE)
+            built = subprocess.run([assembler(), *ASFLAGS, str(directory / "unit.s"), "-o", str(directory / "unit.o")], capture_output=True)
+            self.assertEqual(built.returncode, 0, built.stderr.decode())
+            text = bytearray(sections(directory / "unit.o")[".text"])
+            struct.pack_into(">H", text, 2, TABLE_VRAM >> 16)
+            struct.pack_into(">H", text, 6, TABLE_VRAM & 0xFFFF)
+            rom = bytearray(0x200)
+            rom[: len(text)] = text
+            struct.pack_into(">II", rom, TABLE_VRAM - TEXT_VRAM, *table)
+            (directory / "game.z64").write_bytes(bytes(rom))
+            result = run(
+                "place", str(directory / "unit.o"), "-o", str(directory / "placed.o"), "--rom", str(directory / "game.z64"),
+                "--text", f"{TEXT_VRAM:#x}:0x0:{len(text):#x}", "--map", f"{TEXT_VRAM:#x}:0x0:0x200",
+            )
+            placed = sections(directory / "placed.o") if result.returncode == 0 else {}
+            return result, placed
+
+    def test_jump_table_words_are_relocated_before_the_rom_proof(self) -> None:
+        result, placed = self.place((TEXT_VRAM + 0x10, TEXT_VRAM + 0x18))
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(struct.unpack_from(">HxxH", placed[".text"], 2), (TABLE_VRAM >> 16, TABLE_VRAM & 0xFFFF))
+
+    def test_unrelocated_jump_table_in_the_rom_is_refused(self) -> None:
+        result, _ = self.place((0x10, 0x18))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(".rdata+0x0: ROM word 0x00000010 is not 0x80001010", result.stderr.decode())
