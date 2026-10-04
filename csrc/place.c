@@ -126,6 +126,21 @@ static bool is_constant(const Elf *elf, size_t index, size_t text) {
     return index != text && allocated && (s->type == SHT_PROGBITS || s->type == SHT_NOBITS) && s->size > 0;
 }
 
+/* gcc's literal pool: an unallocated .rdata. The original link may share or reorder its entries, so each
+   reference is proved at its own ROM address instead of the section at one base. */
+static bool is_pool(const Section *s) { return !(s->flags & SHF_ALLOC) && strcmp(s->label, ".rdata") == 0; }
+
+/* Bytes a load or store at the LO16 site reads; 0 when the site only forms an address. */
+static uint32_t access_width(uint32_t instruction) {
+    switch (instruction >> 26) {
+    case 0x20: case 0x24: case 0x28: return 1;             /* lb lbu sb */
+    case 0x21: case 0x25: case 0x29: return 2;             /* lh lhu sh */
+    case 0x23: case 0x27: case 0x2B: case 0x31: case 0x39: return 4; /* lw lwu sw lwc1 swc1 */
+    case 0x37: case 0x3F: case 0x35: case 0x3D: return 8;  /* ld sd ldc1 sdc1 */
+    default: return 0;
+    }
+}
+
 static size_t rel_section_for(const Elf *elf, size_t target) {
     size_t found = 0;
     for (size_t i = 1; i < elf->section_count; i++) {
@@ -283,7 +298,7 @@ int place_main(int argc, char **argv) {
             if (votes > best_votes) best = i, best_votes = votes;
             agree = agree && candidates[i] == candidates[0];
         }
-        if (!agree)
+        if (!agree && !is_pool(&elf.sections[s]))
             problem(&context, xformat("references to %s disagree on its address (0x%08X has %zu of %zu)", elf.sections[s].label, candidates[best], best_votes, candidate_count));
         known[s] = true;
         base[s] = candidates[best];
@@ -303,6 +318,19 @@ int place_main(int argc, char **argv) {
             continue;
         }
         if (section->type == SHT_NOBITS) continue;
+        if (is_pool(section)) {
+            for (size_t i = 0; i < ref_count; i++) {
+                const Reference *ref = &refs[i];
+                if (ref->section != s || !ref->checked) continue;
+                uint32_t width = access_width(be32(code->data + ref->lo));
+                uint32_t address = ref->base + ref->section_offset;
+                if (!width) continue;
+                const uint8_t *at = rom_at(&context, address, width);
+                if (ref->section_offset + width > section->size || at == NULL || memcmp(section->data + ref->section_offset, at, width))
+                    problem(&context, xformat("%s+0x%X: %u bytes differ from ROM at 0x%08X", section->label, ref->section_offset, width, address));
+            }
+            continue;
+        }
         const uint8_t *rom = rom_at(&context, base[s], section->size);
         if (rom == NULL) {
             problem(&context, xformat("%s at 0x%08X (0x%X bytes) lies outside every mapped window", section->label, base[s], section->size));
@@ -356,7 +384,7 @@ int place_main(int argc, char **argv) {
     for (size_t i = 0; i < ref_count; i++) {
         const Reference *ref = &refs[i];
         if (!known[ref->section]) continue;
-        uint32_t address = base[ref->section] + ref->section_offset;
+        uint32_t address = (is_pool(&elf.sections[ref->section]) ? ref->base : base[ref->section]) + ref->section_offset;
         uint32_t hi = be32(code->data + ref->hi), lo = be32(code->data + ref->lo);
         uint32_t new_hi = (hi & 0xFFFF0000) | (((address + 0x8000) >> 16) & 0xFFFF);
         for (size_t j = 0; j < i; j++)
