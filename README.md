@@ -1,6 +1,6 @@
-# n64link
+# AbuMasN64
 
-Two small steps for building N64 C code against the original ROM.
+Builds `n64link`, a small program with two steps for building N64 C code against the original ROM.
 
 - `n64link asn64` turns SN64 cc1 assembly into GNU MIPS assembly that builds the same bytes as SN Systems ASN64 2.81.
 - `n64link place` checks a compiled unit's constants against the ROM and makes its code linkable on its own.
