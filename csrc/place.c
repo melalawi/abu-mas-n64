@@ -121,7 +121,9 @@ static const uint8_t *rom_at(const Context *context, uint32_t vram, uint32_t len
 
 static bool is_constant(const Elf *elf, size_t index, size_t text) {
     const Section *s = &elf->sections[index];
-    return index != text && (s->flags & SHF_ALLOC) && (s->type == SHT_PROGBITS || s->type == SHT_NOBITS) && s->size > 0;
+    /* KMC gcc 2.7.2's assembler emits its read-only constants as .rdata without SHF_ALLOC. */
+    bool allocated = (s->flags & SHF_ALLOC) || strcmp(s->label, ".rdata") == 0;
+    return index != text && allocated && (s->type == SHT_PROGBITS || s->type == SHT_NOBITS) && s->size > 0;
 }
 
 static size_t rel_section_for(const Elf *elf, size_t target) {
