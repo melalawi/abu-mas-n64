@@ -126,9 +126,14 @@ static bool is_constant(const Elf *elf, size_t index, size_t text) {
     return index != text && allocated && (s->type == SHT_PROGBITS || s->type == SHT_NOBITS) && s->size > 0;
 }
 
-/* gcc's literal pool: an unallocated .rdata. The original link may share or reorder its entries, so each
-   reference is proved at its own ROM address instead of the section at one base. */
-static bool is_pool(const Section *s) { return !(s->flags & SHF_ALLOC) && strcmp(s->label, ".rdata") == 0; }
+static size_t rel_section_for(const Elf *elf, size_t target);
+
+/* gcc's literal pool: an unallocated .rdata with no relocations of its own (a jump table has them). The
+   original link may share or reorder its entries, so each reference is proved at its own ROM address. */
+static bool is_pool(const Elf *elf, size_t index) {
+    const Section *s = &elf->sections[index];
+    return !(s->flags & SHF_ALLOC) && strcmp(s->label, ".rdata") == 0 && rel_section_for(elf, index) == 0;
+}
 
 /* Bytes a load or store at the LO16 site reads; 0 when the site only forms an address. */
 static uint32_t access_width(uint32_t instruction) {
@@ -298,7 +303,7 @@ int place_main(int argc, char **argv) {
             if (votes > best_votes) best = i, best_votes = votes;
             agree = agree && candidates[i] == candidates[0];
         }
-        if (!agree && !is_pool(&elf.sections[s]))
+        if (!agree && !is_pool(&elf, s))
             problem(&context, xformat("references to %s disagree on its address (0x%08X has %zu of %zu)", elf.sections[s].label, candidates[best], best_votes, candidate_count));
         known[s] = true;
         base[s] = candidates[best];
@@ -313,7 +318,7 @@ int place_main(int argc, char **argv) {
            reaches the image: data bytes come from the ROM slice and only .text is linked. */
         if (!known[s]) continue;
         if (section->type == SHT_NOBITS) continue;
-        if (is_pool(section)) {
+        if (is_pool(&elf, s)) {
             for (size_t i = 0; i < ref_count; i++) {
                 const Reference *ref = &refs[i];
                 if (ref->section != s || !ref->checked) continue;
@@ -379,7 +384,7 @@ int place_main(int argc, char **argv) {
     for (size_t i = 0; i < ref_count; i++) {
         const Reference *ref = &refs[i];
         if (!known[ref->section]) continue;
-        uint32_t address = (is_pool(&elf.sections[ref->section]) ? ref->base : base[ref->section]) + ref->section_offset;
+        uint32_t address = (is_pool(&elf, ref->section) ? ref->base : base[ref->section]) + ref->section_offset;
         uint32_t hi = be32(code->data + ref->hi), lo = be32(code->data + ref->lo);
         uint32_t new_hi = (hi & 0xFFFF0000) | (((address + 0x8000) >> 16) & 0xFFFF);
         for (size_t j = 0; j < i; j++)
