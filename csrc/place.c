@@ -399,6 +399,9 @@ int place_main(int argc, char **argv) {
         memset(code->data + code->size, 0, text_window.size - code->size);
         code->size = text_window.size;
     }
+    /* The row fixes .text's address. A coarser input alignment (IDO and gcc use 16) would make the linker
+       move .text up and leave a gap before the function. */
+    if (code->addralign > 4) code->addralign = 4;
 
     if (context.problems.len && !score) {
         Buf message = {0};
