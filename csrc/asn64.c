@@ -639,7 +639,7 @@ static void assemble(const char *content, const char *assembler, char **flags, s
         dup2(input[0], 0);
         close(input[0]);
         close(input[1]);
-        execv(assembler, argv);
+        execvp(assembler, argv); /* --as may be a PATH name (the generated Makefile passes one) */
         fprintf(stderr, "n64link: asn64: %s: %s\n", assembler, strerror(errno));
         _exit(127);
     }
