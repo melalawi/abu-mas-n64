@@ -79,12 +79,19 @@ static void read_externals(Context *context, const char *path) {
             free(line);
             continue;
         }
-        char *equals = strchr(line, '=');
         size_t end = strlen(line);
-        if (equals == NULL || line[end - 1] != ';') die("place: %s:%zu: expected NAME = ADDRESS;", path, i + 1);
-        line[end - 1] = '\0';
+        if (line[end - 1] != ';') die("place: %s:%zu: expected NAME = ADDRESS; or PROVIDE(NAME = ADDRESS);", path, i + 1);
+        line[--end] = '\0';
+        char *body = line;
+        if (starts_with(body, "PROVIDE(")) {
+            if (end < 9 || body[end - 1] != ')') die("place: %s:%zu: unclosed PROVIDE(", path, i + 1);
+            body[end - 1] = '\0';
+            body += 8;
+        }
+        char *equals = strchr(body, '=');
+        if (equals == NULL) die("place: %s:%zu: expected NAME = ADDRESS", path, i + 1);
         *equals = '\0';
-        char *name = strip(line), *value = strip(equals + 1);
+        char *name = strip(body), *value = strip(equals + 1);
         context->externals = xrealloc(context->externals, (context->external_count + 1) * sizeof(External));
         context->externals[context->external_count++] = (External){name, number(value, path)};
         free(value);
