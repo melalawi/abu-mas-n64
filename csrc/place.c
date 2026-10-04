@@ -297,7 +297,9 @@ int place_main(int argc, char **argv) {
         if (!known[s]) {
             bool data = false;
             for (uint32_t i = 0; section->data && i < section->size; i++) data = data || section->data[i];
-            if (data) problem(&context, xformat("%s has data but nothing gives its address", section->label));
+            /* An unreferenced, unallocated .rdata (gcc's unused literal pool) never reaches the image. */
+            if (data && (section->flags & SHF_ALLOC))
+                problem(&context, xformat("%s has data but nothing gives its address", section->label));
             continue;
         }
         if (section->type == SHT_NOBITS) continue;
