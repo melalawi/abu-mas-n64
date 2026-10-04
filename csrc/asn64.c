@@ -296,7 +296,7 @@ static void string_bytes(const char *operands, Buf *result) {
     free(stripped);
 }
 
-/* Match ^(\s*(?:[.\w]+:\s*)?)\.string\s+(.*)$ and return the prefix length and operand start. */
+/* Match ^(\s*(?:[.\w]+:\s*)?)\.string(?:\s+(.*))?$ and return the prefix length and operand start. */
 static bool string_directive(const char *line, size_t *prefix, const char **operand) {
     const char *p = line;
     while (*p && is_space((unsigned char)*p)) p++;
@@ -310,7 +310,7 @@ static bool string_directive(const char *line, size_t *prefix, const char **oper
             q++;
             while (*q && is_space((unsigned char)*q)) q++;
         }
-        if (!starts_with(q, ".string") || !is_space((unsigned char)q[7])) continue;
+        if (!starts_with(q, ".string") || (q[7] && !is_space((unsigned char)q[7]))) continue;
         *prefix = (size_t)(q - line);
         q += 7;
         while (*q && is_space((unsigned char)*q)) q++;
