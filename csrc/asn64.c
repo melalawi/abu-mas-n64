@@ -205,14 +205,17 @@ static char *memory(const char *opcode, const char *operand, const char *origina
     return result ? result : xstrdup(original);
 }
 
-static char *floating(const char *opcode, StrVec *operands, long long number) {
+/* mark >= 0 labels the 8-byte alignment point of a double for place. */
+static char *floating(const char *opcode, StrVec *operands, long long number, long long mark) {
     if (operands->len < 2) die("%s: expected two operands", opcode);
     bool is_double = strcmp(opcode, "li.d") == 0;
     char *words = literal_words(operands->items[1], is_double);
-    char *result = xformat("\t.section .rdata\nRODATA_SYM_%lld:\n\t.align %d\n%s\n\t.text\n\t.set noat\n"
+    char *label = mark >= 0 ? xformat("ALIGN8_MARK_%lld:\n", mark) : xstrdup("");
+    char *result = xformat("\t.section .rdata\nRODATA_SYM_%lld:\n\t.align %d\n%s%s\n\t.text\n\t.set noat\n"
                            "\tlui $at, %%hi(RODATA_SYM_%lld)\n\t%s %s, %%lo(RODATA_SYM_%lld)($at)\n\t.set at\n",
-                           number, is_double ? 3 : 2, words, number, is_double ? "ldc1" : "lwc1", operands->items[0], number);
+                           number, is_double ? 3 : 2, label, words, number, is_double ? "ldc1" : "lwc1", operands->items[0], number);
     free(words);
+    free(label);
     return result;
 }
 
@@ -418,7 +421,8 @@ static char *schedule(const char *text) {
     StrVec out = {0};
     vec_push(&out, xstrdup(HEADER));
     bool is_reorder = true, prev_mul = false, delay_slot = false;
-    long long generated = 0;
+    long long generated = 0, marks = 0;
+    bool in_constant = false;
     int delay_count = 0;
     size_t delay_location = 0, prev_instruction = 0, file_count = 0;
     long long last_file = -1;
@@ -442,10 +446,19 @@ static char *schedule(const char *text) {
             continue;
         }
         const char *identifier = tokens.items[0];
-        bool new_prev_mul = false, is_branch = false, dropped = false;
+        bool new_prev_mul = false, is_branch = false, dropped = false, mark = false;
         if (identifier[0] == '.') {
             const char *directive = identifier + 1;
-            if (strcmp(directive, "set") == 0) {
+            if (strcmp(directive, "section") == 0 || strcmp(directive, "text") == 0 || strcmp(directive, "data") == 0 ||
+                strcmp(directive, "rdata") == 0 || strcmp(directive, "rodata") == 0 || strcmp(directive, "sdata") == 0 ||
+                strcmp(directive, "bss") == 0) {
+                bool section = strcmp(directive, "section") == 0;
+                in_constant = section ? tokens.len >= 2 && (strstr(tokens.items[1], "rdata") || strstr(tokens.items[1], "rodata"))
+                                      : strcmp(directive, "rdata") == 0 || strcmp(directive, "rodata") == 0;
+            } else if (strcmp(directive, "align") == 0) {
+                long long power;
+                mark = in_constant && tokens.len >= 2 && parse_int0(tokens.items[1], &power) && power >= 3;
+            } else if (strcmp(directive, "set") == 0) {
                 if (tokens.len < 2) die(".set: missing operand");
                 if (strcmp(tokens.items[1], "noreorder") == 0 || strcmp(tokens.items[1], "reorder") == 0) {
                     is_reorder = strcmp(tokens.items[1], "reorder") == 0;
@@ -521,8 +534,11 @@ static char *schedule(const char *text) {
                 vec_free(&raw);
                 if (starts_with(operands.items[0], "$f")) {
                     free(line);
-                    line = floating(identifier, &operands, generated);
+                    bool is_double = strcmp(identifier, "li.d") == 0;
+                    line = floating(identifier, &operands, generated, is_double ? marks : -1);
+                    if (is_double) marks++;
                     generated++;
+                    in_constant = false;
                 }
                 vec_free(&operands);
             } else if (strcmp(identifier, "div") == 0 || strcmp(identifier, "divu") == 0 || strcmp(identifier, "rem") == 0 ||
@@ -574,6 +590,7 @@ static char *schedule(const char *text) {
             continue;
         }
         vec_push(&out, line);
+        if (mark) vec_push(&out, xformat("ALIGN8_MARK_%lld:\n", marks++));
     }
     if (comm_len || lcomm_len) vec_push(&out, xstrdup("\t.section\t.bss\n"));
     for (int pass = 0; pass < 2; pass++) {

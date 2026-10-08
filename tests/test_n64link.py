@@ -148,3 +148,74 @@ class PlaceTests(unittest.TestCase):
         result, _ = self.place((0x10, 0x18))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(".rdata+0x0: ROM word 0x00000010 is not 0x80001010", result.stderr.decode())
+
+
+FLOATS_THEN_TABLE = """\
+\t.set noreorder
+\t.set noat
+\t.text
+\t.globl func
+func:
+\tlui $at, %hi($c0)
+\tlwc1 $f0, %lo($c0)($at)
+\tlui $at, %hi($c1)
+\tlwc1 $f2, %lo($c1)($at)
+\tlui $at, %hi($jt)
+\tlw $at, %lo($jt)($at)
+\tjr $at
+\tnop
+$L1:
+\tjr $ra
+\tnop
+$L2:
+\tjr $ra
+\tnop
+\t.section .rdata,""
+\t.align 3
+$c0:
+\t.word 0x3f800000
+$c1:
+\t.word 0x40000000
+ALIGN8_MARK_0:
+\t.align 2
+$jt:
+\t.word $L1
+\t.word $L2
+"""
+FLOAT_BASE = 0x80001104  # 4 mod 8: the original link padded the table to 8
+
+
+class AlignedConstantTests(unittest.TestCase):
+    """An 8-aligned item in a section placed at a 4 mod 8 base sits after 4 bytes of zero padding."""
+
+    def place(self, pad: bytes) -> subprocess.CompletedProcess[bytes]:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "unit.s").write_text(FLOATS_THEN_TABLE)
+            built = subprocess.run([assembler(), *ASFLAGS, str(directory / "unit.s"), "-o", str(directory / "unit.o")], capture_output=True)
+            self.assertEqual(built.returncode, 0, built.stderr.decode())
+            text = bytearray(sections(directory / "unit.o")[".text"])
+            addresses = (FLOAT_BASE, FLOAT_BASE + 4, FLOAT_BASE + 0xC)
+            for index, address in enumerate(addresses):
+                struct.pack_into(">H", text, 8 * index + 2, address >> 16)
+                struct.pack_into(">H", text, 8 * index + 6, address & 0xFFFF)
+            rom = bytearray(0x200)
+            rom[: len(text)] = text
+            at = FLOAT_BASE - TEXT_VRAM
+            struct.pack_into(">II", rom, at, 0x3F800000, 0x40000000)
+            rom[at + 8 : at + 12] = pad
+            struct.pack_into(">II", rom, at + 12, TEXT_VRAM + 0x20, TEXT_VRAM + 0x28)
+            (directory / "game.z64").write_bytes(bytes(rom))
+            return run(
+                "place", str(directory / "unit.o"), "-o", str(directory / "placed.o"), "--rom", str(directory / "game.z64"),
+                "--text", f"{TEXT_VRAM:#x}:0x0:{len(text):#x}", "--map", f"{TEXT_VRAM:#x}:0x0:0x200",
+            )
+
+    def test_padded_table_at_a_misaligned_base_is_proved_exact(self) -> None:
+        result = self.place(b"\0\0\0\0")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+    def test_missing_pad_is_refused_by_name(self) -> None:
+        result = self.place(bytes.fromhex("DEADBEEF"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(".rdata+0x8: alignment pad at 0x8000110C is not 4 zero bytes in the ROM", result.stderr.decode())

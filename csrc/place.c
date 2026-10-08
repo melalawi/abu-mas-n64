@@ -160,6 +160,20 @@ static size_t rel_section_for(const Elf *elf, size_t target) {
 
 static uint32_t symbol_offset(const Symbol *symbol) { return (symbol->info & 15) == STT_SECTION ? 0 : symbol->value; }
 
+/* Padding the original link put before 8-byte-aligned items: the section's ALIGN8_MARK offsets m (sorted)
+   sit at b + m + shift, and each one found misaligned there pushes everything after it up by 4. */
+static uint32_t align_shift(const uint32_t *marks, size_t count, uint32_t base, uint32_t offset) {
+    uint32_t shift = 0;
+    for (size_t i = 0; i < count && marks[i] <= offset; i++)
+        if ((base + marks[i] + shift) % 8) shift += 4;
+    return shift;
+}
+
+static int compare_u32(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return (x > y) - (x < y);
+}
+
 int place_main(int argc, char **argv) {
     const char *object = NULL, *output = NULL, *rom_path = NULL, *symbols_path = NULL;
     Window text_window = {0};
@@ -274,13 +288,28 @@ int place_main(int argc, char **argv) {
     size_t count = elf.section_count;
     bool *known = calloc(count, sizeof(bool));
     uint32_t *base = calloc(count, sizeof(uint32_t));
+    uint32_t **marks = calloc(count, sizeof(uint32_t *));
+    size_t *mark_count = calloc(count, sizeof(size_t));
+    for (size_t y = 0; y < elf.symbol_count; y++) {
+        const Symbol *symbol = &elf.symbols[y];
+        size_t s = symbol->shndx;
+        if (s >= count || !starts_with(symbol->label, "ALIGN8_MARK_") || elf.sections[s].addralign < 8 || !is_constant(&elf, s, text)) continue;
+        marks[s] = xrealloc(marks[s], (mark_count[s] + 1) * sizeof(uint32_t));
+        marks[s][mark_count[s]++] = symbol->value;
+    }
+    for (size_t s = 1; s < count; s++)
+        if (mark_count[s]) qsort(marks[s], mark_count[s], sizeof(uint32_t), compare_u32);
     for (size_t s = 1; s < count; s++) {
         if (!is_constant(&elf, s, text)) continue;
-        uint32_t *candidates = NULL;
+        uint32_t *candidates = NULL, *addresses = NULL, *offsets = NULL;
         size_t candidate_count = 0;
         for (size_t i = 0; i < ref_count; i++) {
             if (refs[i].section != s || !refs[i].checked) continue;
             candidates = xrealloc(candidates, (candidate_count + 1) * sizeof(uint32_t));
+            addresses = xrealloc(addresses, (candidate_count + 1) * sizeof(uint32_t));
+            offsets = xrealloc(offsets, (candidate_count + 1) * sizeof(uint32_t));
+            addresses[candidate_count] = refs[i].base + refs[i].section_offset;
+            offsets[candidate_count] = refs[i].section_offset;
             candidates[candidate_count++] = refs[i].base;
         }
         for (size_t y = 0; y < elf.symbol_count; y++) {
@@ -289,10 +318,33 @@ int place_main(int argc, char **argv) {
             const External *known_symbol = external(&context, symbol->label);
             if (known_symbol == NULL) continue;
             candidates = xrealloc(candidates, (candidate_count + 1) * sizeof(uint32_t));
+            addresses = xrealloc(addresses, (candidate_count + 1) * sizeof(uint32_t));
+            offsets = xrealloc(offsets, (candidate_count + 1) * sizeof(uint32_t));
+            addresses[candidate_count] = known_symbol->value;
+            offsets[candidate_count] = symbol->value;
             candidates[candidate_count++] = known_symbol->value - symbol->value;
         }
         if (!candidate_count) {
             free(candidates);
+            free(addresses);
+            free(offsets);
+            continue;
+        }
+        /* With alignment markers, one base must explain every reference through the padded layout. */
+        bool padded = false;
+        for (size_t i = 0; mark_count[s] && i < candidate_count && !padded; i++) {
+            bool fits = true;
+            for (size_t j = 0; fits && j < candidate_count; j++)
+                fits = addresses[j] == candidates[i] + offsets[j] + align_shift(marks[s], mark_count[s], candidates[i], offsets[j]);
+            if (fits) {
+                known[s] = padded = true;
+                base[s] = candidates[i];
+            }
+        }
+        if (padded) {
+            free(candidates);
+            free(addresses);
+            free(offsets);
             continue;
         }
         size_t best = 0, best_votes = 0;
@@ -308,7 +360,10 @@ int place_main(int argc, char **argv) {
         known[s] = true;
         base[s] = candidates[best];
         free(candidates);
+        free(addresses);
+        free(offsets);
     }
+#define MAPPED(s, o) (base[s] + (o) + align_shift(marks[s], mark_count[s], base[s], (o)))
 
     /* Prove every constant section's bytes; R_MIPS_32 words compare after relocation. */
     for (size_t s = 1; s < count; s++) {
@@ -331,11 +386,35 @@ int place_main(int argc, char **argv) {
             }
             continue;
         }
-        const uint8_t *rom = rom_at(&context, base[s], section->size);
-        if (rom == NULL) {
-            problem(&context, xformat("%s at 0x%08X (0x%X bytes) lies outside every mapped window", section->label, base[s], section->size));
+        /* Gather the section's bytes from their padded ROM addresses; each pad must be 4 zero bytes. */
+        uint8_t *gathered = xmalloc(section->size);
+        bool mapped = true;
+        for (size_t seg = 0; mapped && seg <= mark_count[s]; seg++) {
+            uint32_t start = seg ? marks[s][seg - 1] : 0, end = seg < mark_count[s] ? marks[s][seg] : section->size;
+            if (end > section->size) end = section->size;
+            if (start >= end) continue;
+            uint32_t at = MAPPED(s, start);
+            if (seg && start && at != MAPPED(s, start - 1) + 1) {
+                const uint8_t *pad = rom_at(&context, at - 4, 4);
+                if (pad == NULL || be32(pad) != 0) {
+                    problem(&context, xformat("%s+0x%X: alignment pad at 0x%08X is not 4 zero bytes in the ROM", section->label, start, at - 4));
+                    mapped = false;
+                    break;
+                }
+            }
+            const uint8_t *piece = rom_at(&context, at, end - start);
+            if (piece == NULL) {
+                problem(&context, xformat("%s at 0x%08X (0x%X bytes) lies outside every mapped window", section->label, at, end - start));
+                mapped = false;
+                break;
+            }
+            memcpy(gathered + start, piece, end - start);
+        }
+        if (!mapped) {
+            free(gathered);
             continue;
         }
+        const uint8_t *rom = gathered;
         bool *relocated = calloc(section->size, sizeof(bool));
         size_t data_rels_index = rel_section_for(&elf, s), data_rel_count = 0;
         Rel *data_rels = data_rels_index ? elf_rels(&elf, data_rels_index, &data_rel_count) : NULL;
@@ -351,7 +430,7 @@ int place_main(int argc, char **argv) {
             uint32_t target;
             if (symbol->shndx == text) target = text_window.vram + symbol_offset(symbol);
             else if (symbol->shndx == SHN_ABS) target = symbol->value;
-            else if (symbol->shndx < count && known[symbol->shndx]) target = base[symbol->shndx] + symbol_offset(symbol);
+            else if (symbol->shndx < count && known[symbol->shndx]) target = MAPPED(symbol->shndx, symbol_offset(symbol));
             else if (symbol->shndx == SHN_UNDEF) {
                 const External *found = external(&context, symbol->label);
                 if (found == NULL) {
@@ -373,18 +452,19 @@ int place_main(int argc, char **argv) {
         }
         for (uint32_t i = 0; i < section->size; i++) {
             if (relocated[i] || section->data[i] == rom[i]) continue;
-            problem(&context, xformat("%s+0x%X: byte 0x%02X differs from ROM 0x%02X at 0x%08X", section->label, i, section->data[i], rom[i], base[s] + i));
+            problem(&context, xformat("%s+0x%X: byte 0x%02X differs from ROM 0x%02X at 0x%08X", section->label, i, section->data[i], rom[i], MAPPED(s, i)));
             break;
         }
         free(data_rels);
         free(relocated);
+        free(gathered);
     }
 
     /* Write absolute %hi/%lo pairs; drop their relocations. */
     for (size_t i = 0; i < ref_count; i++) {
         const Reference *ref = &refs[i];
         if (!known[ref->section]) continue;
-        uint32_t address = (is_pool(&elf, ref->section) ? ref->base : base[ref->section]) + ref->section_offset;
+        uint32_t address = is_pool(&elf, ref->section) ? ref->base + ref->section_offset : MAPPED(ref->section, ref->section_offset);
         uint32_t hi = be32(code->data + ref->hi), lo = be32(code->data + ref->lo);
         uint32_t new_hi = (hi & 0xFFFF0000) | (((address + 0x8000) >> 16) & 0xFFFF);
         for (size_t j = 0; j < i; j++)
@@ -404,7 +484,7 @@ int place_main(int argc, char **argv) {
     for (size_t y = 0; y < elf.symbol_count; y++) {
         Symbol *symbol = &elf.symbols[y];
         if (symbol->shndx >= count || !known[symbol->shndx] || (symbol->info & 15) == STT_SECTION) continue;
-        symbol->value += base[symbol->shndx];
+        symbol->value = MAPPED(symbol->shndx, symbol->value);
         symbol->shndx = SHN_ABS;
     }
     elf_store_symbols(&elf);
