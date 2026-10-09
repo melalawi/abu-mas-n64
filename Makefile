@@ -2,8 +2,8 @@
 CC ?= cc
 CFLAGS ?= -O2
 WARNINGS = -std=c11 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -Wshadow -Wconversion -Wno-sign-conversion
-SOURCES = csrc/main.c csrc/asn64.c csrc/place.c csrc/elf.c csrc/util.c
-HEADERS = csrc/n64link.h csrc/elf.h csrc/util.h
+SOURCES = csrc/main.c csrc/asn64.c csrc/util.c
+HEADERS = csrc/n64link.h csrc/util.h
 
 build/n64link: $(SOURCES) $(HEADERS)
 	mkdir -p build

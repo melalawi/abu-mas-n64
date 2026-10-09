@@ -7,6 +7,5 @@
 
 char *asn64_normalize(const char *text);
 int asn64_main(int argc, char **argv);
-int place_main(int argc, char **argv);
 
 #endif
