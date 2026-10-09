@@ -3,7 +3,7 @@
 #ifndef N64LINK_H
 #define N64LINK_H
 
-#define N64LINK_VERSION "0.3.2"
+#define N64LINK_VERSION "0.4.0"
 
 char *asn64_normalize(const char *text);
 int asn64_main(int argc, char **argv);
