@@ -1,0 +1,22 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make
+      - name: Package the binary
+        run: |
+          name="n64link-${GITHUB_REF_NAME}-linux-x86_64"
+          mkdir "$name"
+          cp build/n64link LICENSE NOTICE "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" n64link-*.tar.gz n64link-*.sha256 --title "$GITHUB_REF_NAME" --generate-notes
